@@ -1,5 +1,5 @@
 #Copied from https://github.com/dacort/metabase-athena-driver/blob/d7572cd99551ea998a011f8f00a1e39c1eaa59b8/Dockerfile
-ARG METABASE_VERSION=v0.49.7
+ARG METABASE_VERSION=v1.49.13
 
 FROM clojure:openjdk-11-tools-deps-slim-buster AS stg_base
 
@@ -46,7 +46,7 @@ FROM scratch as stg_export
 COPY --from=stg_build /build/driver/target/sparksql-databricks-v2.metabase-driver.jar /
 
 # Now we can run Metabase with our built driver
-FROM metabase/metabase:${METABASE_VERSION} AS stg_runner
+FROM metabase/metabase-enterprise:${METABASE_VERSION} AS stg_runner
 
 # A metabase user/group is manually added in https://github.com/metabase/metabase/blob/master/bin/docker/run_metabase.sh
 # Make the UID and GID match
