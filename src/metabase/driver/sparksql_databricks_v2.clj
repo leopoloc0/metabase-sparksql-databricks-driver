@@ -20,13 +20,15 @@
             [metabase.driver.sql.query-processor :as sql.qp]
             [metabase.driver.sql.util :as sql.u]
             [metabase.driver.sql.util.unprepare :as unprepare]
-            [metabase.mbql.util :as mbql.u]
+            [metabase.legacy-mbql.util :as mbql.u]
             [metabase.query-processor.store :as qp.store]
             [metabase.query-processor.util :as qputil]
             [metabase.query-processor.util.add-alias-info :as add]
             [metabase.lib.metadata :as lib.metadata]
             [metabase.util.honey-sql-2 :as h2x])
-  (:import [java.sql Connection ResultSet]))
+  (:import (java.sql Connection ResultSet)))
+
+(set! *warn-on-reflection* true)
 
 (driver/register! :sparksql-databricks-v2, :parent :hive-like)
 
@@ -64,6 +66,18 @@
                                                        ;; no changes for anyone else.
                                                        :else                   source-table)))]
     (parent-method driver field-clause)))
+
+(defn- format-over
+  "e.g. ROW_NUMBER() OVER (ORDER BY field DESC) AS __rownum__"
+  [_fn [expr partition]]
+  (let [[expr-sql & expr-args]           (sql/format-expr expr      {:nested true})
+        [partition-sql & partition-args] (sql/format-expr partition {:nested true})]
+    (into [(format "%s OVER %s" expr-sql partition-sql)]
+          cat
+          [expr-args
+           partition-args])))
+
+(sql/register-fn! ::over #'format-over)
 
 (defmethod sql.qp/apply-top-level-clause [:sparksql-databricks-v2 :page]
   [_driver _clause honeysql-form {{:keys [items page]} :page}]
@@ -214,18 +228,24 @@
 ;; the current HiveConnection doesn't support .createStatement
 (defmethod sql-jdbc.execute/statement-supported? :sparksql-databricks-v2 [_] false)
 
-(doseq [feature [:basic-aggregations
-                 :binning
-                 :expression-aggregations
-                 :expressions
-                 :native-parameters
-                 :nested-queries
-                 :standard-deviation-aggregations]]
-  (defmethod driver/supports? [:sparksql-databricks-v2 feature] [_ _] true))
+(doseq [[feature supported?] {:basic-aggregations              true
+                              :binning                         true
+                              :expression-aggregations         true
+                              :expressions                     true
+                              :native-parameters               true
+                              :nested-queries                  true
+                              :standard-deviation-aggregations true
+                              :metadata/key-constraints        false
+                              :test/jvm-timezone-setting       false
+                              ;; disabled for now, see issue #40991 to fix this.
+                              :window-functions                false}]
+  (defmethod driver/database-supports? [:sparksql-databricks-v2 feature] [_driver _feature _db] supported?))
 
 ;; only define an implementation for `:foreign-keys` if none exists already. In test extensions we define an alternate
 ;; implementation, and we don't want to stomp over that if it was loaded already
-(when-not (get (methods driver/supports?) [:sparksql-databricks-v2 :foreign-keys])
-  (defmethod driver/supports? [:sparksql-databricks-v2 :foreign-keys] [_ _] false))
+(when-not (get (methods driver/database-supports?) [:sparksql-databricks-v2 :foreign-keys])
+  (defmethod driver/database-supports? [:sparksql-databricks-v2 :foreign-keys] [_driver _feature _db] true))
 
-(defmethod sql.qp/quote-style :sparksql-databricks-v2 [_] :mysql)
+(defmethod sql.qp/quote-style :sparksql-databricks-v2
+  [_driver]
+  :mysql)
